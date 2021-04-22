@@ -69,7 +69,7 @@ namespace Remotely.Desktop.Core.Services
                     catch { }
                 }
                 Connection = new HubConnectionBuilder()
-                    .WithUrl($"{host.Trim().TrimEnd('/')}/CasterHub")
+                    .WithUrl($"{host}/CasterHub")
                     .AddMessagePackProtocol()
                     .WithAutomaticReconnect()
                     .Build();
@@ -220,14 +220,12 @@ namespace Remotely.Desktop.Core.Services
                         }
                     }
 
-                    _ = Task.Run(() => {
-                        ScreenCaster.BeginScreenCasting(new ScreenCastRequest()
-                        {
-                            NotifyUser = notifyUser,
-                            ViewerID = viewerID,
-                            RequesterName = requesterName,
-                            UseWebRtc = useWebRtc
-                        });
+                    _ = ScreenCaster.BeginScreenCasting(new ScreenCastRequest()
+                    {
+                        NotifyUser = notifyUser,
+                        ViewerID = viewerID,
+                        RequesterName = requesterName,
+                        UseWebRtc = useWebRtc
                     });
                 }
                 catch (Exception ex)

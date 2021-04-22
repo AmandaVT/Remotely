@@ -43,7 +43,7 @@ namespace Remotely.Desktop.Win.Services
     {
         private readonly Dictionary<string, int> _bitBltScreens = new();
         private readonly Dictionary<string, DirectXOutput> _directxScreens = new();
-        private readonly object _screenBoundsLock = new();
+        private readonly SemaphoreSlim _screenCaptureLock = new(1,1);
 
         public ScreenCapturerWin()
         {
@@ -53,14 +53,8 @@ namespace Remotely.Desktop.Win.Services
 
         public event EventHandler<Rectangle> ScreenChanged;
 
-        private enum GetDirectXFrameResult
-        {
-            Success,
-            Failure,
-            Timeout,
-        }
-
         public bool CaptureFullscreen { get; set; } = true;
+        public Rectangle CurrentScreenBounds { get; private set; } = Screen.PrimaryScreen.Bounds;
         public bool NeedsInit { get; set; } = true;
         public string SelectedScreen { get; private set; } = Screen.PrimaryScreen.DeviceName;
         public void Dispose()
@@ -73,65 +67,56 @@ namespace Remotely.Desktop.Win.Services
             }
             catch { }
         }
-        public Rectangle CurrentScreenBounds { get; private set; } = Screen.PrimaryScreen.Bounds;
-
         public IEnumerable<string> GetDisplayNames() => Screen.AllScreens.Select(x => x.DeviceName);
 
         public Bitmap GetNextFrame()
         {
-            lock (_screenBoundsLock)
+            try
             {
-                try
+                _screenCaptureLock.Wait();
+
+                if (NeedsInit)
                 {
-
-                    Win32Interop.SwitchToInputDesktop();
-
-                    if (NeedsInit)
-                    {
-                        Logger.Write("Init needed in GetNextFrame.");
-                        Init();
-                    }
-
-                    // Sometimes DX will result in a timeout, even when there are changes
-                    // on the screen.  I've observed this when a laptop lid is closed, or
-                    // on some machines that aren't connected to a monitor.  This will
-                    // have it fall back to BitBlt in those cases.
-                    // TODO: Make DX capture work with changed screen orientation.
-                    if (_directxScreens.ContainsKey(SelectedScreen) &&
-                        SystemInformation.ScreenOrientation != ScreenOrientation.Angle270 &&
-                        SystemInformation.ScreenOrientation != ScreenOrientation.Angle90)
-                    {
-                        var (result, frame) = GetDirectXFrame();
-
-                        if (result == GetDirectXFrameResult.Success)
-                        {
-                            return frame;
-                        }
-                    }
-
-                    return GetBitBltFrame();
-
+                    Logger.Write("Init needed in GetNextFrame.");
+                    Init();
                 }
-                catch (Exception e)
+
+                // Sometimes DX will result in a timeout, even when there are changes
+                // on the screen.  I've observed this when a laptop lid is closed, or
+                // on some machines that aren't connected to a monitor.  This will
+                // have it fall back to BitBlt in those cases.
+                // TODO: Make DX capture work with changed screen orientation.
+                if (_directxScreens.ContainsKey(SelectedScreen) &&
+                    SystemInformation.ScreenOrientation != ScreenOrientation.Angle270 &&
+                    SystemInformation.ScreenOrientation != ScreenOrientation.Angle90)
                 {
-                    Logger.Write(e);
-                    NeedsInit = true;
+                    var (result, frame) = GetDirectXFrame();
+
+                    if (result == GetDirectXFrameResult.Success ||
+                        result == GetDirectXFrameResult.Timeout)
+                    {
+                        return frame;
+                    }
                 }
-                return null;
+
+                return GetBitBltFrame();
+
             }
-
+            catch (Exception e)
+            {
+                Logger.Write(e);
+                NeedsInit = true;
+            }
+            finally
+            {
+                _screenCaptureLock.Release();
+            }
+            return null;
         }
 
         public int GetScreenCount() => Screen.AllScreens.Length;
 
-        public int GetSelectedScreenIndex()
-        {
-            if (_bitBltScreens.TryGetValue(SelectedScreen, out var index))
-            {
-                return index;
-            }
-            return 0;
-        }
+        public int GetSelectedScreenIndex() => _bitBltScreens[SelectedScreen];
 
         public Rectangle GetVirtualScreenBounds() => SystemInformation.VirtualScreen;
 
@@ -148,23 +133,20 @@ namespace Remotely.Desktop.Win.Services
 
         public void SetSelectedScreen(string displayName)
         {
-            lock (_screenBoundsLock)
+            if (displayName == SelectedScreen)
             {
-                if (displayName == SelectedScreen)
-                {
-                    return;
-                }
-
-                if (_bitBltScreens.ContainsKey(displayName))
-                {
-                    SelectedScreen = displayName;
-                }
-                else
-                {
-                    SelectedScreen = _bitBltScreens.Keys.First();
-                }
-                RefreshCurrentScreenBounds();
+                return;
             }
+
+            if (_bitBltScreens.ContainsKey(displayName))
+            {
+                SelectedScreen = displayName;
+            }
+            else
+            {
+                SelectedScreen = _bitBltScreens.Keys.First();
+            }
+            RefreshCurrentScreenBounds();
         }
 
         private void ClearDirectXOutputs()
@@ -200,6 +182,14 @@ namespace Remotely.Desktop.Win.Services
 
             return null;
         }
+
+        private enum GetDirectXFrameResult
+        {
+            Success,
+            Failure,
+            Timeout,
+        }
+
         private (GetDirectXFrameResult result, Bitmap frame) GetDirectXFrame()
         {
             try

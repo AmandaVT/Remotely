@@ -1,6 +1,5 @@
 ﻿using Remotely.Shared.Enums;
 using System;
-using System.Collections.Concurrent;
 
 namespace Remotely.Server.Models
 {
@@ -17,6 +16,5 @@ namespace Remotely.Server.Models
         public string RequesterUserName { get; set; }
         public string ServiceID { get; set; }
         public DateTimeOffset StartTime { get; set; }
-        public ConcurrentList<string> ViewerList { get; } = new();
     }
 }

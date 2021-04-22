@@ -2,7 +2,7 @@
 {
     public enum Theme
     {
-        Dark,
-        Light
+        Light,
+        Dark
     }
 }

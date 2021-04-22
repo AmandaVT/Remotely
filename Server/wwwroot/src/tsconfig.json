@@ -5,9 +5,11 @@
     "removeComments": false,
     "sourceMap": true,
     "target": "es2017",
-    "module": "ESNext",
+    "module": "AMD",
     "allowJs": false,
-    "moduleResolution": "Node"
+    "outFile": "../out.js",
+    "moduleResolution": "Node",
+    "typeRoots": [ "../lib/@types/" ]
   },
   "exclude": [
     "node_modules",

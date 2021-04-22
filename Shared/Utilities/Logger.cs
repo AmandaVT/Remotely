@@ -4,98 +4,65 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace Remotely.Shared.Utilities
 {
     public static class Logger
     {
         private static string LogPath => Path.Combine(Path.GetTempPath(), "Remotely_Logs.log");
-        private static SemaphoreSlim WriteLock { get; } = new(1, 1);
-        public static void Debug(string message, [CallerMemberName] string callerName = "")
+        private static object WriteLock { get; } = new object();
+        public static void Debug(string message)
         {
             try
             {
-                WriteLock.Wait();
+                lock (WriteLock)
+                {
+                    if (EnvironmentHelper.IsDebug)
+                    {
+                        CheckLogFileExists();
 
-                if (EnvironmentHelper.IsDebug)
+                        File.AppendAllText(LogPath, $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff}\t[Debug]\t{message}{Environment.NewLine}");
+                    }
+
+                    System.Diagnostics.Debug.WriteLine(message);
+                }
+            }
+            catch { }
+        }
+
+        public static void Write(string message, EventType eventType = EventType.Info)
+        {
+            try
+            {
+                lock (WriteLock)
+                {
+                    CheckLogFileExists();
+                    File.AppendAllText(LogPath, $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff}\t[{eventType}]\t{message}{Environment.NewLine}");
+                    Console.WriteLine(message);
+                }
+            }
+            catch { }
+        }
+
+        public static void Write(Exception ex, EventType eventType = EventType.Error)
+        {
+            lock (WriteLock)
+            {
+                try
                 {
                     CheckLogFileExists();
 
-                    File.AppendAllText(LogPath, $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff}\t[Debug]\t[{callerName}]\t{message}{Environment.NewLine}");
+                    var exception = ex;
+
+                    while (exception != null)
+                    {
+                        File.AppendAllText(LogPath, $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff}\t[{eventType}]\t{exception?.Message}\t{exception?.StackTrace}\t{exception?.Source}{Environment.NewLine}");
+                        Console.WriteLine(exception.Message);
+                        exception = exception.InnerException;
+                    }
                 }
-
-                System.Diagnostics.Debug.WriteLine(message);
-            }
-            catch { }
-            finally
-            {
-                WriteLock.Release();
-            }
-        }
-
-        public static async Task<byte[]> ReadAllLogs()
-        {
-            try
-            {
-                WriteLock.Wait();
-
-                CheckLogFileExists();
-
-                return await File.ReadAllBytesAsync(LogPath);
-            }
-            catch (Exception ex)
-            {
-                Write(ex);
-                return Array.Empty<byte>();
-            }
-            finally
-            {
-                WriteLock.Release();
-            }
-        }
-
-        public static void Write(string message, EventType eventType = EventType.Info, [CallerMemberName] string callerName = "")
-        {
-            try
-            {
-                WriteLock.Wait();
-
-                CheckLogFileExists();
-                File.AppendAllText(LogPath, $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff}\t[{eventType}]\t[{callerName}]\t{message}{Environment.NewLine}");
-                Console.WriteLine(message);
-            }
-            catch { }
-            finally
-            {
-                WriteLock.Release();
-            }
-        }
-
-        public static void Write(Exception ex, EventType eventType = EventType.Error, [CallerMemberName] string callerName = "")
-        {
-            try
-            {
-                WriteLock.Wait();
-
-                CheckLogFileExists();
-
-                var exception = ex;
-
-                while (exception != null)
-                {
-                    File.AppendAllText(LogPath, $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff}\t[{eventType}]\t[{callerName}]\t{exception?.Message}\t{exception?.StackTrace}\t{exception?.Source}{Environment.NewLine}");
-                    Console.WriteLine(exception.Message);
-                    exception = exception.InnerException;
-                }
-            }
-            catch { }
-            finally
-            {
-                WriteLock.Release();
+                catch { }
             }
         }
 

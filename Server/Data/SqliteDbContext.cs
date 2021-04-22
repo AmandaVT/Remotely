@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 
 namespace Remotely.Server.Data
 {
-    public class SqliteDbContext : AppDb
+    public class SqliteDbContext : ApplicationDbContext
     {
         private readonly IConfiguration _configuration;
 
@@ -22,7 +22,7 @@ namespace Remotely.Server.Data
         protected override void OnConfiguring(DbContextOptionsBuilder options)
         {
             options.UseSqlite(_configuration.GetConnectionString("SQLite"));
-            base.OnConfiguring(options);
+            options.ConfigureWarnings(x => x.Ignore(RelationalEventId.MultipleCollectionIncludeWarning));
         }
     }
 }

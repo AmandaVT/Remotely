@@ -1,9 +1,9 @@
 ﻿import * as UI from "./UI.js";
-import { BaseDtoType } from "./Enums/BaseDtoType.js";
+import { BaseDtoType } from "../Shared/Enums/BaseDtoType.js";
 import { BaseDto } from "./Interfaces/BaseDto.js";
 import { ViewerApp } from "./App.js";
-import { ShowMessage } from "./UI.js";
-import { Sound } from "./Sound.js";
+import { ShowMessage } from "../Shared/UI.js";
+import { Sound } from "../Shared/Sound.js";
 import {
     AudioSampleDto,
     CaptureFrameDto,
@@ -66,27 +66,28 @@ export class DtoMessageHandler {
 
             this.ImagePartials = [];
 
-            let url = window.URL.createObjectURL(completedFrame);
-            let img = new Image(captureFrame.Width, captureFrame.Height);
-            img.onload = () => {
-                UI.Screen2DContext.drawImage(img,
-                    captureFrame.Left,
-                    captureFrame.Top,
-                    captureFrame.Width,
-                    captureFrame.Height);
-                window.URL.revokeObjectURL(url);
-            };
-            img.src = url;
-
-            //createImageBitmap(completedFrame).then(bitmap => {
-            //    UI.Screen2DContext.drawImage(bitmap,
+            //let url = window.URL.createObjectURL(completedFrame);
+            //let img = new Image(captureFrame.Width, captureFrame.Height);
+            //img.onload = () => {
+            //    UI.Screen2DContext.drawImage(img,
             //        captureFrame.Left,
             //        captureFrame.Top,
             //        captureFrame.Width,
             //        captureFrame.Height);
+            //    window.URL.revokeObjectURL(url);
+            //    console.log(`Render time: ${Date.now() - start}ms`);
+            //};
+            //img.src = url;
 
-            //    bitmap.close();
-            //})
+            createImageBitmap(completedFrame).then(bitmap => {
+                UI.Screen2DContext.drawImage(bitmap,
+                    captureFrame.Left,
+                    captureFrame.Top,
+                    captureFrame.Width,
+                    captureFrame.Height);
+
+                bitmap.close();
+            })
 
             ViewerApp.MessageSender.SendFrameReceived();
         }

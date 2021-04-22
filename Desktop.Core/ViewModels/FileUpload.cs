@@ -1,5 +1,4 @@
 ﻿using System.IO;
-using System.Threading;
 
 namespace Remotely.Desktop.Core.ViewModels
 {
@@ -7,8 +6,6 @@ namespace Remotely.Desktop.Core.ViewModels
     {
         private string _filePath;
         private double _percentProgress;
-
-        public CancellationTokenSource CancellationTokenSource { get; } = new CancellationTokenSource();
 
         public string DisplayName => Path.GetFileName(FilePath);
 
@@ -21,6 +18,7 @@ namespace Remotely.Desktop.Core.ViewModels
             set
             {
                 _filePath = value;
+                FirePropertyChanged();
                 FirePropertyChanged();
             }
         }

@@ -8,14 +8,13 @@ namespace Remotely.Server.Pages
 {
     public class GetSupportModel : PageModel
     {
-        private readonly IDataService _dataService;
-        private readonly IEmailSenderEx _emailSender;
-
-        public GetSupportModel(IDataService dataService, IEmailSenderEx emailSender)
+        public GetSupportModel(IDataService dataService)
         {
-            _dataService = dataService;
-            _emailSender = emailSender;
+            DataService = dataService;
         }
+
+
+        private IDataService DataService { get; }
 
         [TempData]
         public string StatusMessage { get; set; }
@@ -28,37 +27,28 @@ namespace Remotely.Server.Pages
             return Page();
         }
 
-        public async Task<IActionResult> OnPost(string deviceId)
+        public async Task<IActionResult> OnPost(string deviceID)
         {
             if (!ModelState.IsValid)
             {
                 return Page();
             }
 
-            var orgID = _dataService.GetDevice(deviceId)?.OrganizationID;
+            var orgID = DataService.GetDevice(deviceID)?.OrganizationID;
 
-            var alertParts = new string[]
+            await DataService.AddAlert(new Remotely.Shared.Models.AlertOptions()
             {
-                $"{Input.Name} is requesting support.",
-                $"Device ID: {deviceId}",
-                $"Email: {Input.Email}.",
-                $"Phone: {Input.Phone}.",
-                $"Chat OK: {Input.ChatResponseOk}."
-            };
-
-            var alertMessage = string.Join("  ", alertParts);
-            await _dataService.AddAlert(deviceId, orgID, alertMessage);
-
-            var orgUsers = await _dataService.GetAllUsersInOrganization(orgID);
-            var emailMessage = string.Join("<br />", alertParts);
-            foreach (var user in orgUsers)
-            {
-                await _emailSender.SendEmailAsync(user.Email, "Support Request", emailMessage);
-            }
+                AlertDeviceID = deviceID,
+                AlertMessage = $"{Input.Name} is requesting support.  " +
+                    $"Email: {Input.Email}.  " +
+                    $"Phone: {Input.Phone}.  " +
+                    $"Chat OK: {Input.ChatResponseOk}.",
+                ShouldAlert = true
+            }, orgID);
 
             StatusMessage = "We got it!  Someone will contact you soon.";
 
-            return RedirectToPage("GetSupport", new { deviceId });
+            return RedirectToPage("GetSupport", new { deviceID });
         }
 
         public class InputModel

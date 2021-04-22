@@ -1,7 +1,6 @@
 ﻿using Microsoft.AspNetCore.SignalR;
 using Remotely.Server.Models;
 using Remotely.Server.Services;
-using Remotely.Shared.Enums;
 using Remotely.Shared.Models;
 using System;
 using System.Collections.Concurrent;
@@ -12,44 +11,58 @@ namespace Remotely.Server.Hubs
 {
     public class CasterHub : Hub
     {
-        private readonly IApplicationConfig _appConfig;
-        private readonly IHubContext<AgentHub> _agentHubContext;
-        private readonly ICircuitManager _circuitManager;
-
-        public CasterHub(ICircuitManager circuitManager,
+        public CasterHub(IHubContext<BrowserHub> browserHub,
             IHubContext<ViewerHub> viewerHubContext,
             IHubContext<AgentHub> agentHubContext,
             IApplicationConfig appConfig)
         {
-            _circuitManager = circuitManager;
+            BrowserHubContext = browserHub;
             ViewerHubContext = viewerHubContext;
-            _agentHubContext = agentHubContext;
-            _appConfig = appConfig;
+            AgentHubContext = agentHubContext;
+            AppConfig = appConfig;
         }
 
         public static ConcurrentDictionary<string, RCSessionInfo> SessionInfoList { get; } = new ConcurrentDictionary<string, RCSessionInfo>();
+        public IApplicationConfig AppConfig { get; }
+        private IHubContext<AgentHub> AgentHubContext { get; }
+        private IHubContext<BrowserHub> BrowserHubContext { get; }
         private RCSessionInfo SessionInfo
         {
             get
             {
-                if (Context.Items.TryGetValue("SessionInfo", out var result))
+                if (Context.Items.ContainsKey("SessionInfo"))
                 {
-                    return (RCSessionInfo)result;
+                    return (RCSessionInfo)Context.Items["SessionInfo"];
                 }
-                var newSession = new RCSessionInfo();
-                Context.Items["SessionInfo"] = newSession;
-                return newSession;
+                else
+                {
+                    return null;
+                }
+            }
+            set
+            {
+                Context.Items["SessionInfo"] = value;
             }
         }
 
         private IHubContext<ViewerHub> ViewerHubContext { get; }
-
-        private ConcurrentList<string> ViewerList => SessionInfo.ViewerList;
-
+        private List<string> ViewerList
+        {
+            get
+            {
+                if (!Context.Items.ContainsKey("ViewerList"))
+                {
+                    Context.Items["ViewerList"] = new List<string>();
+                }
+                return Context.Items["ViewerList"] as List<string>;
+            }
+        }
         public async Task DisconnectViewer(string viewerID, bool notifyViewer)
         {
-            ViewerList.Remove(viewerID);
-
+            lock (ViewerList)
+            {
+                ViewerList.Remove(viewerID);
+            }
             if (notifyViewer)
             {
                 await ViewerHubContext.Clients.Client(viewerID).SendAsync("ViewerRemoved");
@@ -58,7 +71,7 @@ namespace Remotely.Server.Hubs
 
         public IceServerModel[] GetIceServers()
         {
-            return _appConfig.IceServers;
+            return AppConfig.IceServers;
         }
 
         public Task GetSessionID()
@@ -79,8 +92,7 @@ namespace Remotely.Server.Hubs
         public Task NotifyRequesterUnattendedReady(string browserHubConnectionID)
         {
             var deviceId = SessionInfoList[Context.ConnectionId].DeviceID;
-            _circuitManager.InvokeOnConnection(browserHubConnectionID, CircuitEventName.UnattendedSessionReady, Context.ConnectionId, deviceId);
-            return Task.CompletedTask;
+            return BrowserHubContext.Clients.Client(browserHubConnectionID).SendAsync("UnattendedSessionReady", Context.ConnectionId, deviceId);
         }
 
         public Task NotifyViewersRelaunchedScreenCasterReady(string[] viewerIDs)
@@ -90,8 +102,11 @@ namespace Remotely.Server.Hubs
 
         public override async Task OnConnectedAsync()
         {
-            SessionInfo.CasterSocketID = Context.ConnectionId;
-            SessionInfo.StartTime = DateTimeOffset.Now;
+            SessionInfo = new RCSessionInfo()
+            {
+                CasterSocketID = Context.ConnectionId,
+                StartTime = DateTimeOffset.Now
+            };
             SessionInfoList.AddOrUpdate(Context.ConnectionId, SessionInfo, (id, si) => SessionInfo);
 
             await base.OnConnectedAsync();
@@ -101,16 +116,16 @@ namespace Remotely.Server.Hubs
         {
             SessionInfoList.Remove(Context.ConnectionId, out _);
 
-            if (SessionInfo.Mode == RemoteControlMode.Normal)
+            if (SessionInfo.Mode == Shared.Enums.RemoteControlMode.Normal)
             {
                 await ViewerHubContext.Clients.Clients(ViewerList).SendAsync("ScreenCasterDisconnected");
             }
-            else if (SessionInfo.Mode == RemoteControlMode.Unattended)
+            else if (SessionInfo.Mode == Shared.Enums.RemoteControlMode.Unattended)
             {
                 if (ViewerList.Count > 0)
                 {
                     await ViewerHubContext.Clients.Clients(ViewerList).SendAsync("Reconnecting");
-                    await _agentHubContext.Clients.Client(SessionInfo.ServiceID).SendAsync("RestartScreenCaster", ViewerList, SessionInfo.ServiceID, Context.ConnectionId);
+                    await AgentHubContext.Clients.Client(SessionInfo.ServiceID).SendAsync("RestartScreenCaster", ViewerList, SessionInfo.ServiceID, Context.ConnectionId);
                 }
             }
 
@@ -142,7 +157,7 @@ namespace Remotely.Server.Hubs
 
         public Task SendCtrlAltDelToAgent()
         {
-            return _agentHubContext.Clients.Client(SessionInfo.ServiceID).SendAsync("CtrlAltDel");
+            return AgentHubContext.Clients.Client(SessionInfo.ServiceID).SendAsync("CtrlAltDel");
         }
 
         public Task SendDtoToBrowser(byte[] dto, string viewerId)
@@ -152,7 +167,7 @@ namespace Remotely.Server.Hubs
 
         public Task SendIceCandidateToBrowser(string candidate, int sdpMlineIndex, string sdpMid, string viewerID)
         {
-            if (_appConfig.UseWebRtc)
+            if (AppConfig.UseWebRtc)
             {
                 return ViewerHubContext.Clients.Client(viewerID).SendAsync("ReceiveIceCandidate", candidate, sdpMlineIndex, sdpMid);
             }
@@ -162,7 +177,7 @@ namespace Remotely.Server.Hubs
 
         public Task SendRtcOfferToBrowser(string sdp, string viewerID, IceServerModel[] iceServers)
         {
-            if (_appConfig.UseWebRtc)
+            if (AppConfig.UseWebRtc)
             {
                 return ViewerHubContext.Clients.Client(viewerID).SendAsync("ReceiveRtcOffer", sdp, iceServers);
             }
@@ -172,7 +187,10 @@ namespace Remotely.Server.Hubs
 
         public Task ViewerConnected(string viewerConnectionId)
         {
-            ViewerList.Add(viewerConnectionId);
+            lock (ViewerList)
+            {
+                ViewerList.Add(viewerConnectionId);
+            }
             return Task.CompletedTask;
         }
     }

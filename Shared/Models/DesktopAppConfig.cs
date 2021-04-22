@@ -12,7 +12,7 @@ namespace Remotely.Shared.Models
 
         public string Host
         {
-            get => _host.TrimEnd('/');
+            get => _host;
             set
             {
                 _host = value?.TrimEnd('/');

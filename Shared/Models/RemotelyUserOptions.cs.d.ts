@@ -1,8 +1,10 @@
+declare module server {
 	interface remotelyUserOptions {
-		displayName: string;
+		consolePrompt: string;
+		commandModeShortcutWeb: string;
 		commandModeShortcutPSCore: string;
 		commandModeShortcutWinPS: string;
 		commandModeShortcutCMD: string;
 		commandModeShortcutBash: string;
-		theme: any;
 	}
+}

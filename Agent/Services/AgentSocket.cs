@@ -1,9 +1,10 @@
 ﻿using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
-using Remotely.Agent.Extensions;
 using Remotely.Agent.Interfaces;
+using Remotely.Agent.Utilities;
 using Remotely.Shared.Enums;
 using Remotely.Shared.Models;
+using Remotely.Shared.Services;
 using Remotely.Shared.Utilities;
 using Remotely.Shared.Win32;
 using System;
@@ -23,48 +24,46 @@ namespace Remotely.Agent.Services
     {
         public AgentSocket(ConfigService configService,
             Uninstaller uninstaller,
-            ScriptExecutor scriptExecutor,
+            CommandExecutor commandExecutor,
+            ScriptRunner scriptRunner,
             ChatClientService chatService,
             IAppLauncher appLauncher,
-            IUpdater updater,
-            IDeviceInformationService deviceInfoService)
+            IUpdater updater)
         {
-            _configService = configService;
-            _uninstaller = uninstaller;
-            _scriptExecutor = scriptExecutor;
-            _appLauncher = appLauncher;
-            _chatService = chatService;
-            _updater = updater;
-            _deviceInfoService = deviceInfoService;
+            ConfigService = configService;
+            Uninstaller = uninstaller;
+            CommandExecutor = commandExecutor;
+            ScriptRunner = scriptRunner;
+            AppLauncher = appLauncher;
+            ChatService = chatService;
+            Updater = updater;
         }
-        public bool IsConnected => _hubConnection?.State == HubConnectionState.Connected;
-        private readonly IAppLauncher _appLauncher;
-        private readonly ChatClientService _chatService;
-        private readonly ScriptExecutor _scriptExecutor;
-        private readonly ConfigService _configService;
-        private readonly Uninstaller _uninstaller;
-        private readonly IUpdater _updater;
-        private bool IsServerVerified;
-        private ConnectionInfo ConnectionInfo;
-        private System.Timers.Timer HeartbeatTimer;
-        private HubConnection _hubConnection;
-
-        private readonly IDeviceInformationService _deviceInfoService;
+        public bool IsConnected => HubConnection?.State == HubConnectionState.Connected;
+        private IAppLauncher AppLauncher { get; }
+        private ChatClientService ChatService { get; }
+        private CommandExecutor CommandExecutor { get; }
+        private ConfigService ConfigService { get; }
+        private ConnectionInfo ConnectionInfo { get; set; }
+        private System.Timers.Timer HeartbeatTimer { get; set; }
+        private HubConnection HubConnection { get; set; }
+        private bool IsServerVerified { get; set; }
+        private ScriptRunner ScriptRunner { get; }
+        private Uninstaller Uninstaller { get; }
+        private IUpdater Updater { get; }
 
         public async Task Connect()
         {
             try
             {
-                ConnectionInfo = _configService.GetConnectionInfo();
+                ConnectionInfo = ConfigService.GetConnectionInfo();
 
-                _hubConnection = new HubConnectionBuilder()
+                HubConnection = new HubConnectionBuilder()
                     .WithUrl(ConnectionInfo.Host + "/AgentHub")
-                    .AddMessagePackProtocol()
                     .Build();
 
                 RegisterMessageHandlers();
 
-                await _hubConnection.StartAsync();
+                await HubConnection.StartAsync();
             }
             catch (Exception ex)
             {
@@ -74,9 +73,9 @@ namespace Remotely.Agent.Services
 
             try
             {
-                var device = await _deviceInfoService.CreateDevice(ConnectionInfo.DeviceID, ConnectionInfo.OrganizationID);
+                var device = await DeviceInformation.Create(ConnectionInfo.DeviceID, ConnectionInfo.OrganizationID);
 
-                var result = await _hubConnection.InvokeAsync<bool>("DeviceCameOnline", device);
+                var result = await HubConnection.InvokeAsync<bool>("DeviceCameOnline", device);
 
                 if (!result)
                 {
@@ -85,7 +84,7 @@ namespace Remotely.Agent.Services
                     // nothing here and wait for it to get resolved.
                     Logger.Write("There was an issue registering with the server.  The server might be undergoing maintenance, or the supplied organization ID might be incorrect.");
                     await Task.Delay(TimeSpan.FromMinutes(1));
-                    await _hubConnection.StopAsync();
+                    await HubConnection.StopAsync();
                     return;
                 }
 
@@ -93,12 +92,12 @@ namespace Remotely.Agent.Services
                 {
                     IsServerVerified = true;
                     ConnectionInfo.ServerVerificationToken = Guid.NewGuid().ToString();
-                    await _hubConnection.SendAsync("SetServerVerificationToken", ConnectionInfo.ServerVerificationToken);
-                    _configService.SaveConnectionInfo(ConnectionInfo);
+                    await HubConnection.SendAsync("SetServerVerificationToken", ConnectionInfo.ServerVerificationToken);
+                    ConfigService.SaveConnectionInfo(ConnectionInfo);
                 }
                 else
                 {
-                    await _hubConnection.SendAsync("SendServerVerificationToken");
+                    await HubConnection.SendAsync("SendServerVerificationToken");
                 }
 
                 HeartbeatTimer?.Dispose();
@@ -106,7 +105,13 @@ namespace Remotely.Agent.Services
                 HeartbeatTimer.Elapsed += HeartbeatTimer_Elapsed;
                 HeartbeatTimer.Start();
 
-                await _hubConnection.SendAsync("CheckForPendingSriptRuns");
+                if (EnvironmentHelper.IsWindows &&
+                    !RegistryHelper.CheckNetFrameworkVersion())
+                {
+                    await SendDeviceAlert("The .NET Framework version on this device is outdated, and " +
+                        "Remotely will no longer receive updates.  Update the installed .NET Framework version " +
+                        "to fix this.");
+                }
             }
             catch (Exception ex)
             {
@@ -137,13 +142,23 @@ namespace Remotely.Agent.Services
             }
         }
 
-
+        public async Task SendDeviceAlert(string alertMessage)
+        {
+            try
+            {
+                await HubConnection.SendAsync("AddDeviceAlert", alertMessage);
+            }
+            catch (Exception ex)
+            {
+                Logger.Write(ex, EventType.Warning);
+            }
+        }
         public async Task SendHeartbeat()
         {
             try
             {
-                var currentInfo = await _deviceInfoService.CreateDevice(ConnectionInfo.DeviceID, ConnectionInfo.OrganizationID);
-                await _hubConnection.SendAsync("DeviceHeartbeat", currentInfo);
+                var currentInfo = await DeviceInformation.Create(ConnectionInfo.DeviceID, ConnectionInfo.OrganizationID);
+                await HubConnection.SendAsync("DeviceHeartbeat", currentInfo);
             }
             catch (Exception ex)
             {
@@ -161,25 +176,7 @@ namespace Remotely.Agent.Services
             // TODO: Remove possibility for circular dependencies in the future
             // by emitting these events so other services can listen for them.
 
-            _hubConnection.On("ChangeWindowsSession", async (string serviceID, string viewerID, int targetSessionID) =>
-            {
-                try
-                {
-                    if (!IsServerVerified)
-                    {
-                        Logger.Write("Session change attempted before server was verified.", EventType.Warning);
-                        return;
-                    }
-
-                    await _appLauncher.RestartScreenCaster(new List<string>() { viewerID }, serviceID, viewerID, _hubConnection, targetSessionID);
-                }
-                catch (Exception ex)
-                {
-                    Logger.Write(ex);
-                }
-            });
-
-            _hubConnection.On("Chat", async (string senderName, string message, string orgName, bool disconnected, string senderConnectionID) =>
+            HubConnection.On("Chat", async (string senderName, string message, string orgName, bool disconnected, string senderConnectionID) =>
             {
                 try
                 {
@@ -189,25 +186,14 @@ namespace Remotely.Agent.Services
                         return;
                     }
 
-                    await _chatService.SendMessage(senderName, message, orgName, disconnected, senderConnectionID, _hubConnection);
+                    await ChatService.SendMessage(senderName, message, orgName, disconnected, senderConnectionID, HubConnection);
                 }
                 catch (Exception ex)
                 {
                     Logger.Write(ex);
                 }
             });
-
-            _hubConnection.On("CtrlAltDel", () =>
-            {
-                if (!IsServerVerified)
-                {
-                    Logger.Write("CtrlAltDel attempted before server was verified.", EventType.Warning);
-                    return;
-                }
-                User32.SendSAS(false);
-            });
-
-            _hubConnection.On("DownloadFile", async (string filePath, string senderConnectionID) =>
+            HubConnection.On("DownloadFile", async (string filePath, string senderConnectionID) =>
             {
                 try
                 {
@@ -220,11 +206,7 @@ namespace Remotely.Agent.Services
                     filePath = filePath.Replace("\"", "");
                     if (!File.Exists(filePath))
                     {
-                        await _hubConnection.SendAsync("DisplayMessage", 
-                            "File not found on remote device.", 
-                            "File not found.",
-                            "bg-danger",
-                            senderConnectionID);
+                        await HubConnection.SendAsync("DisplayMessage", "File not found on remote device.", "File not found.", senderConnectionID);
                         return;
                     }
 
@@ -235,7 +217,7 @@ namespace Remotely.Agent.Services
                         if (args.ProgressPercentage > lastProgressPercent)
                         {
                             lastProgressPercent = args.ProgressPercentage;
-                            await _hubConnection.SendAsync("DownloadFileProgress", lastProgressPercent, senderConnectionID);
+                            await HubConnection.SendAsync("DownloadFileProgress", lastProgressPercent, senderConnectionID);
                         }
                     };
 
@@ -243,16 +225,12 @@ namespace Remotely.Agent.Services
                     {
                         var response = await wc.UploadFileTaskAsync($"{ConnectionInfo.Host}/API/FileSharing/", filePath);
                         var fileIDs = JsonSerializer.Deserialize<string[]>(Encoding.UTF8.GetString(response));
-                        await _hubConnection.SendAsync("DownloadFile", fileIDs[0], senderConnectionID);
+                        await HubConnection.SendAsync("DownloadFile", fileIDs[0], senderConnectionID);
                     }
                     catch (Exception ex)
                     {
                         Logger.Write(ex);
-                        await _hubConnection.SendAsync("DisplayMessage", 
-                            "Error occurred while uploading file from remote computer.", 
-                            "Upload error.", 
-                            "bg-danger", 
-                            senderConnectionID);
+                        await HubConnection.SendAsync("DisplayMessage", "Error occurred while uploading file from remote computer.", "Upload error.", senderConnectionID);
                     }
                 }
                 catch (Exception ex)
@@ -260,186 +238,58 @@ namespace Remotely.Agent.Services
                     Logger.Write(ex);
                 }
             });
-
-            _hubConnection.On("ExecuteCommand", ((ScriptingShell shell, string command, string authToken, string senderUsername, string senderConnectionID) =>
+            HubConnection.On("ChangeWindowsSession", async (string serviceID, string viewerID, int targetSessionID) =>
             {
                 try
                 {
                     if (!IsServerVerified)
                     {
-                        Logger.Write($"Command attempted before server was verified.  Shell: {shell}.  Command: {command}.  Sender: {senderConnectionID}", EventType.Warning);
+                        Logger.Write("Session change attempted before server was verified.", EventType.Warning);
                         return;
                     }
 
-                    _ = _scriptExecutor.RunCommandFromTerminal(shell,
-                        command,
-                        authToken,
-                        senderUsername,
-                        senderConnectionID,
-                        ScriptInputType.Terminal,
-                        TimeSpan.FromSeconds(30),
-                        _hubConnection);
+                    await AppLauncher.RestartScreenCaster(new List<string>() { viewerID }, serviceID, viewerID, HubConnection, targetSessionID);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Write(ex);
+                }
+            });
+            HubConnection.On("ExecuteCommand", (async (string mode, string command, string commandID, string senderConnectionID) =>
+            {
+                try
+                {
+                    if (!IsServerVerified)
+                    {
+                        Logger.Write($"Command attempted before server was verified.  Mode: {mode}.  Command: {command}.  Sender: {senderConnectionID}", EventType.Warning);
+                        return;
+                    }
+
+                    await CommandExecutor.ExecuteCommand(mode, command, commandID, senderConnectionID, HubConnection);
                 }
                 catch (Exception ex)
                 {
                     Logger.Write(ex);
                 }
             }));
-
-            _hubConnection.On("ExecuteCommandFromApi", (
-                ScriptingShell shell,
-                string authToken,
-                string requestID,
-                string command,
-                string senderUsername) =>
+            HubConnection.On("ExecuteCommandFromApi", (async (string mode, string requestID, string command, string commandID, string senderUserName) =>
             {
                 try
                 {
                     if (!IsServerVerified)
                     {
-                        Logger.Write($"Command attempted before server was verified.  Shell: {shell}.  Command: {command}.  Sender: {senderUsername}", EventType.Warning);
+                        Logger.Write($"Command attempted before server was verified.  Mode: {mode}.  Command: {command}.  Sender: {senderUserName}", EventType.Warning);
                         return;
                     }
 
-                    _ = _scriptExecutor.RunCommandFromApi(shell, requestID, command, senderUsername, authToken, _hubConnection);
+                    await CommandExecutor.ExecuteCommandFromApi(mode, requestID, command, commandID, senderUserName, HubConnection);
                 }
                 catch (Exception ex)
                 {
                     Logger.Write(ex);
                 }
-            });
-
-
-            _hubConnection.On("GetLogs", async (string senderConnectionId) =>
-            {
-                var logBytes = await Logger.ReadAllLogs();
-
-                if (!logBytes.Any())
-                {
-                    var message = "There are no log entries written.";
-
-                    await _hubConnection.InvokeAsync("SendLogs", message, senderConnectionId);
-                    return;
-                }
-
-                for (var i = 0; i < logBytes.Length; i += 100_000)
-                {
-                    var chunk = Encoding.UTF8.GetString(logBytes.Skip(i).Take(100_000).ToArray());
-                    await _hubConnection.InvokeAsync("SendLogs", chunk, senderConnectionId);
-                }
-            });
-
-
-            _hubConnection.On("GetPowerShellCompletions", async (string inputText, int currentIndex, CompletionIntent intent, bool? forward, string senderConnectionId) =>
-            {
-                try
-                {
-                    var session = PSCore.GetCurrent(senderConnectionId);
-                    var completion = session.GetCompletions(inputText, currentIndex, forward);
-                    var completionModel = completion.ToPwshCompletion();
-                    await _hubConnection.InvokeAsync("ReturnPowerShellCompletions", completionModel, intent, senderConnectionId);
-                }
-                catch (Exception ex)
-                {
-                    Logger.Write(ex);
-                }
-            });
-
-
-            _hubConnection.On("ReinstallAgent", async () =>
-            {
-                try
-                {
-                    await _updater.InstallLatestVersion();
-                }
-                catch (Exception ex)
-                {
-                    Logger.Write(ex);
-                }
-            });
-
-            _hubConnection.On("UninstallAgent", () =>
-            {
-                try
-                {
-                    _uninstaller.UninstallAgent();
-                }
-                catch (Exception ex)
-                {
-                    Logger.Write(ex);
-                }
-            });
-
-            _hubConnection.On("RemoteControl", async (string requesterID, string serviceID) =>
-            {
-                try
-                {
-                    if (!IsServerVerified)
-                    {
-                        Logger.Write("Remote control attempted before server was verified.", EventType.Warning);
-                        return;
-                    }
-                    await _appLauncher.LaunchRemoteControl(-1, requesterID, serviceID, _hubConnection);
-                }
-                catch (Exception ex)
-                {
-                    Logger.Write(ex);
-                }
-            });
-
-            _hubConnection.On("RestartScreenCaster", async (List<string> viewerIDs, string serviceID, string requesterID) =>
-            {
-                try
-                {
-                    if (!IsServerVerified)
-                    {
-                        Logger.Write("Remote control attempted before server was verified.", EventType.Warning);
-                        return;
-                    }
-                    await _appLauncher.RestartScreenCaster(viewerIDs, serviceID, requesterID, _hubConnection);
-                }
-                catch (Exception ex)
-                {
-                    Logger.Write(ex);
-                }
-            });
-
-
-            _hubConnection.On("RunScript", (Guid savedScriptId, int scriptRunId, string initiator, ScriptInputType scriptInputType, string authToken) =>
-            {
-                try
-                {
-                    if (!IsServerVerified)
-                    {
-                        Logger.Write($"Script run attempted before server was verified.  Script ID: {savedScriptId}.  Initiator: {initiator}", EventType.Warning);
-                        return;
-                    }
-
-                    _ = _scriptExecutor.RunScript(savedScriptId, scriptRunId, initiator, scriptInputType, authToken);
-
-                }
-                catch (Exception ex)
-                {
-                    Logger.Write(ex);
-                }
-            });
-
-
-            _hubConnection.On("ServerVerificationToken", (string verificationToken) =>
-            {
-                if (verificationToken == ConnectionInfo.ServerVerificationToken)
-                {
-                    IsServerVerified = true;
-                }
-                else
-                {
-                    Logger.Write($"Server sent an incorrect verification token.  Token Sent: {verificationToken}.", EventType.Warning);
-                    return;
-                }
-            });
-
-
-            _hubConnection.On("TransferFileFromBrowserToAgent", async (string transferID, List<string> fileIDs, string requesterID, string authToken) =>
+            }));
+            HubConnection.On("UploadFiles", async (string transferID, List<string> fileIDs, string requesterID) =>
             {
                 try
                 {
@@ -456,7 +306,6 @@ namespace Remotely.Agent.Services
                     {
                         var url = $"{ConnectionInfo.Host}/API/FileSharing/{fileID}";
                         var wr = WebRequest.CreateHttp(url);
-                        wr.Headers[HttpRequestHeader.Authorization] = authToken;
                         using var response = await wr.GetResponseAsync();
                         var cd = response.Headers["Content-Disposition"];
                         var filename = cd
@@ -473,7 +322,24 @@ namespace Remotely.Agent.Services
                         using var fs = new FileStream(Path.Combine(sharedFilePath, filename), FileMode.Create);
                         rs.CopyTo(fs);
                     }
-                    await _hubConnection.SendAsync("TransferCompleted", transferID, requesterID);
+                    await HubConnection.SendAsync("TransferCompleted", transferID, requesterID);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Write(ex);
+                }
+            });
+            HubConnection.On("DeployScript", async (string mode, string fileID, string commandResultID, string requesterID) =>
+            {
+                try
+                {
+                    if (!IsServerVerified)
+                    {
+                        Logger.Write($"Script deploy attempted before server was verified.  Mode: {mode}.  File ID: {fileID}.  Sender: {requesterID}", EventType.Warning);
+                        return;
+                    }
+
+                    await ScriptRunner.RunScript(mode, fileID, commandResultID, requesterID, HubConnection);
                 }
                 catch (Exception ex)
                 {
@@ -481,10 +347,90 @@ namespace Remotely.Agent.Services
                 }
             });
 
-            _hubConnection.On("TriggerHeartbeat", async () =>
+            HubConnection.On("ReinstallAgent", async () =>
+            {
+                try
+                {
+                    await Updater.InstallLatestVersion();
+                }
+                catch (Exception ex)
+                {
+                    Logger.Write(ex);
+                }
+            });
+
+            HubConnection.On("UninstallAgent", () =>
+            {
+                try
+                {
+                    Uninstaller.UninstallAgent();
+                }
+                catch (Exception ex)
+                {
+                    Logger.Write(ex);
+                }
+            });
+
+            HubConnection.On("RemoteControl", async (string requesterID, string serviceID) =>
+            {
+                try
+                {
+                    if (!IsServerVerified)
+                    {
+                        Logger.Write("Remote control attempted before server was verified.", EventType.Warning);
+                        return;
+                    }
+                    await AppLauncher.LaunchRemoteControl(-1, requesterID, serviceID, HubConnection);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Write(ex);
+                }
+            });
+            HubConnection.On("RestartScreenCaster", async (List<string> viewerIDs, string serviceID, string requesterID) =>
+            {
+                try
+                {
+                    if (!IsServerVerified)
+                    {
+                        Logger.Write("Remote control attempted before server was verified.", EventType.Warning);
+                        return;
+                    }
+                    await AppLauncher.RestartScreenCaster(viewerIDs, serviceID, requesterID, HubConnection);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Write(ex);
+                }
+            });
+            HubConnection.On("CtrlAltDel", () =>
+            {
+                if (!IsServerVerified)
+                {
+                    Logger.Write("CtrlAltDel attempted before server was verified.", EventType.Warning);
+                    return;
+                }
+                User32.SendSAS(false);
+            });
+
+            HubConnection.On("TriggerHeartbeat", async () =>
             {
                 await SendHeartbeat();
             });
+
+            HubConnection.On("ServerVerificationToken", (string verificationToken) =>
+            {
+                if (verificationToken == ConnectionInfo.ServerVerificationToken)
+                {
+                    IsServerVerified = true;
+                }
+                else
+                {
+                    Logger.Write($"Server sent an incorrect verification token.  Token Sent: {verificationToken}.", EventType.Warning);
+                    return;
+                }
+            });
         }
+
     }
 }

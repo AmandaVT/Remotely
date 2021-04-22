@@ -39,8 +39,8 @@ namespace Remotely.Desktop.Win.ViewModels
 
             Application.Current.Exit += Application_Exit;
 
-            _configService = Services.GetRequiredService<IConfigService>();
-            _cursorIconWatcher = Services.GetRequiredService<ICursorIconWatcher>();
+            _configService = Services?.GetRequiredService<IConfigService>();
+            _cursorIconWatcher = Services?.GetRequiredService<ICursorIconWatcher>();
             _cursorIconWatcher.OnChange += CursorIconWatcher_OnChange;
             _conductor = Services.GetRequiredService<Conductor>();
             _casterSocket = Services.GetRequiredService<ICasterSocket>();
@@ -236,9 +236,6 @@ namespace Remotely.Desktop.Win.ViewModels
                     await GetSessionID();
                 };
 
-                await DeviceInitService.GetInitParams();
-                ApplyBranding();
-
                 await GetSessionID();
             }
             catch (Exception ex)
@@ -260,20 +257,18 @@ namespace Remotely.Desktop.Win.ViewModels
 
             prompt.Owner = App.Current?.MainWindow;
             prompt.ShowDialog();
-            var result = prompt.ViewModel.Host?.Trim()?.TrimEnd('/');
-
-            if (!Uri.TryCreate(result, UriKind.Absolute, out var serverUri) ||
-                (serverUri.Scheme != Uri.UriSchemeHttp && serverUri.Scheme != Uri.UriSchemeHttps))
+            var result = prompt.ViewModel.Host?.Trim();
+            if (!result.StartsWith("https://") && !result.StartsWith("http://"))
             {
-                Logger.Write("Server URL is not valid.");
-                MessageBox.Show("Server URL must be a valid Uri (e.g. https://app.remotely.one).", "Invalid Server URL", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
+                result = $"https://{result}";
             }
-
-            Host = result;
-            var config = _configService.GetConfig();
-            config.Host = Host;
-            _configService.Save(config);
+            if (result != Host)
+            {
+                Host = result;
+                var config = _configService.GetConfig();
+                config.Host = Host;
+                _configService.Save(config);
+            }
         }
 
         public void ShutdownApp()

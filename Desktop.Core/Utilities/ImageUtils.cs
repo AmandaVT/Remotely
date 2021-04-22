@@ -1,4 +1,6 @@
-﻿using System;
+﻿using SkiaSharp;
+using SkiaSharp.Views.Desktop;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
@@ -12,31 +14,18 @@ namespace Remotely.Desktop.Core.Utilities
 {
     public class ImageUtils
     {
-        private static ImageCodecInfo _jpegEncoder = ImageCodecInfo.GetImageEncoders().FirstOrDefault(x => x.FormatID == ImageFormat.Jpeg.Guid);
-
-        //public static byte[] EncodeWithSkia(Bitmap bitmap, SKEncodedImageFormat format, int quality)
-        //{
-        //    using var ms = new MemoryStream();
-        //    var info = new SKImageInfo(bitmap.Width, bitmap.Height);
-        //    var skBitmap = new SKBitmap(info);
-        //    using (var pixmap = skBitmap.PeekPixels())
-        //    {
-        //        bitmap.ToSKPixmap(pixmap);
-        //    }
-
-        //    skBitmap.Encode(ms, format, quality);
-
-        //    return ms.ToArray();
-        //}
-
-        public static byte[] EncodeJpeg(Bitmap bitmap, int quality)
+        public static byte[] EncodeWithSkia(Bitmap bitmap, SKEncodedImageFormat format, int quality)
         {
             using var ms = new MemoryStream();
-            using var encoderParams = new EncoderParameters(1)
+            var info = new SKImageInfo(bitmap.Width, bitmap.Height);
+            var skBitmap = new SKBitmap(info);
+            using (var pixmap = skBitmap.PeekPixels())
             {
-                Param = new[] { new EncoderParameter(Encoder.Quality, quality) }
-            };
-            bitmap.Save(ms, _jpegEncoder, encoderParams);
+                bitmap.ToSKPixmap(pixmap);
+            }
+
+            skBitmap.Encode(ms, format, quality);
+
             return ms.ToArray();
         }
 
@@ -163,7 +152,11 @@ namespace Remotely.Desktop.Core.Utilities
             {
                 throw new Exception("Bitmaps are not of equal dimensions.");
             }
-
+            if (!Bitmap.IsAlphaPixelFormat(currentFrame.PixelFormat) || !Bitmap.IsAlphaPixelFormat(previousFrame.PixelFormat) ||
+                !Bitmap.IsCanonicalPixelFormat(currentFrame.PixelFormat) || !Bitmap.IsCanonicalPixelFormat(previousFrame.PixelFormat))
+            {
+                throw new Exception("Bitmaps must be 32 bits per pixel and contain alpha channel.");
+            }
             var width = currentFrame.Width;
             var height = currentFrame.Height;
 

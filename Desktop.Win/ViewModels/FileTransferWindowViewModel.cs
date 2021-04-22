@@ -111,7 +111,7 @@ namespace Remotely.Desktop.Win.ViewModels
                 FileUploads.Add(fileUpload);
             });
 
-            await _fileTransferService.UploadFile(fileUpload, _viewer, fileUpload.CancellationTokenSource.Token, (double progress) =>
+            await _fileTransferService.UploadFile(fileUpload, _viewer, (double progress) =>
             {
                 App.Current.Dispatcher.Invoke(() => fileUpload.PercentProgress = progress);
             });
@@ -122,7 +122,6 @@ namespace Remotely.Desktop.Win.ViewModels
             if (param is FileUpload fileUpload)
             {
                 FileUploads.Remove(fileUpload);
-                fileUpload.CancellationTokenSource.Cancel();
             }
         });
     }

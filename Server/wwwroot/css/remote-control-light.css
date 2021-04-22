@@ -51,7 +51,7 @@ button[disabled] {
 }
 
 
-.center-connection-box {
+#connectBox {
     background-color: rgb(60, 60, 60);
     color: white;
 }

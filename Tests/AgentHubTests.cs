@@ -5,7 +5,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
 using Remotely.Server.Hubs;
-using Remotely.Server.Models;
 using Remotely.Server.Services;
 using Remotely.Shared.Models;
 using System;
@@ -21,32 +20,26 @@ namespace Remotely.Tests
     [TestClass]
     public class AgentHubTests
     {
-        private TestData _testData;
-
         public IDataService DataService { get; private set; }
 
         [TestMethod]
         [DoNotParallelize]
         public async Task DeviceCameOnline_BannedByName()
         {
-            var circuitManager = new Mock<ICircuitManager>();
-            var circuitConnection = new Mock<ICircuitConnection>();
-            circuitManager.Setup(x => x.Connections).Returns(new[] { circuitConnection.Object });
-            circuitConnection.Setup(x => x.User).Returns(_testData.Admin1);
             var appConfig = new Mock<IApplicationConfig>();
+            var browserHub = new Mock<IHubContext<BrowserHub>>();
             var viewerHub = new Mock<IHubContext<ViewerHub>>();
-            var expiringTokenService = new Mock<IExpiringTokenService>();
 
-            appConfig.Setup(x => x.BannedDevices).Returns(new string[] { _testData.Device1.DeviceName });
+            appConfig.Setup(x => x.BannedDevices).Returns(new string[] { TestData.Device1.DeviceName });
 
-            var hub = new AgentHub(DataService, appConfig.Object, viewerHub.Object, circuitManager.Object, expiringTokenService.Object);
+            var hub = new AgentHub(DataService, appConfig.Object, browserHub.Object, viewerHub.Object);
 
             var hubClients = new Mock<IHubCallerClients>();
             var caller = new Mock<IClientProxy>();
             hubClients.Setup(x => x.Caller).Returns(caller.Object);
             hub.Clients = hubClients.Object;
 
-            Assert.IsFalse(await hub.DeviceCameOnline(_testData.Device1));
+            Assert.IsFalse(await hub.DeviceCameOnline(TestData.Device1));
             hubClients.Verify(x => x.Caller, Times.Once);
             caller.Verify(x => x.SendCoreAsync("UninstallAgent", It.IsAny<object[]>(), It.IsAny<CancellationToken>()), Times.Once);
         }
@@ -55,24 +48,20 @@ namespace Remotely.Tests
         [DoNotParallelize]
         public async Task DeviceCameOnline_BannedById()
         {
-            var circuitManager = new Mock<ICircuitManager>();
-            var circuitConnection = new Mock<ICircuitConnection>();
-            circuitManager.Setup(x => x.Connections).Returns(new[] { circuitConnection.Object });
-            circuitConnection.Setup(x => x.User).Returns(_testData.Admin1);
             var appConfig = new Mock<IApplicationConfig>();
+            var browserHub = new Mock<IHubContext<BrowserHub>>();
             var viewerHub = new Mock<IHubContext<ViewerHub>>();
-            var expiringTokenService = new Mock<IExpiringTokenService>();
 
-            appConfig.Setup(x => x.BannedDevices).Returns(new string[] { _testData.Device1.ID });
+            appConfig.Setup(x => x.BannedDevices).Returns(new string[] { TestData.Device1.ID });
 
-            var hub = new AgentHub(DataService, appConfig.Object, viewerHub.Object, circuitManager.Object, expiringTokenService.Object);
+            var hub = new AgentHub(DataService, appConfig.Object, browserHub.Object, viewerHub.Object);
 
             var hubClients = new Mock<IHubCallerClients>();
             var caller = new Mock<IClientProxy>();
             hubClients.Setup(x => x.Caller).Returns(caller.Object);
             hub.Clients = hubClients.Object;
 
-            Assert.IsFalse(await hub.DeviceCameOnline(_testData.Device1));
+            Assert.IsFalse(await hub.DeviceCameOnline(TestData.Device1));
             hubClients.Verify(x => x.Caller, Times.Once);
             caller.Verify(x => x.SendCoreAsync("UninstallAgent", It.IsAny<object[]>(), It.IsAny<CancellationToken>()), Times.Once);
         }
@@ -84,22 +73,21 @@ namespace Remotely.Tests
         {
             var appConfig = new Mock<IApplicationConfig>();
 
-            var circuitManager = new Mock<ICircuitManager>();
-            var circuitConnection = new Mock<ICircuitConnection>();
-            circuitManager.Setup(x => x.Connections).Returns(new[] { circuitConnection.Object });
-            circuitConnection.Setup(x => x.User).Returns(_testData.Admin1);
+            var browserHub = new Mock<IHubContext<BrowserHub>>();
             var browserHubClients = new Mock<IHubClients>();
-            var expiringTokenService = new Mock<IExpiringTokenService>();
+            var browserClientsProxy = new Mock<IClientProxy>();
+            browserHubClients.Setup(x => x.Clients(It.IsAny<IReadOnlyList<string>>())).Returns(browserClientsProxy.Object);
+            browserHub.Setup(x => x.Clients).Returns(browserHubClients.Object);
 
             var viewerHub = new Mock<IHubContext<ViewerHub>>();
 
             appConfig.Setup(x => x.BannedDevices).Returns(Array.Empty<string>());
 
-            var hub = new AgentHub(DataService, appConfig.Object, viewerHub.Object, circuitManager.Object, expiringTokenService.Object)
+            var hub = new AgentHub(DataService, appConfig.Object, browserHub.Object, viewerHub.Object)
             {
                 Context = new CallerContext()
             };
-            
+            //hub.Context.Items.Add("Device", TestData.Device1);
 
             var agentHubClients = new Mock<IHubCallerClients>();
             var agentHubCaller = new Mock<IClientProxy>();
@@ -108,29 +96,26 @@ namespace Remotely.Tests
             agentHubClients.Setup(x => x.Clients(It.IsAny<IReadOnlyList<string>>())).Returns(agentClientsProxy.Object);
             hub.Clients = agentHubClients.Object;
 
-            var result = await hub.DeviceCameOnline(_testData.Device1);
-
-            Assert.IsTrue(result);
-
+            Assert.IsTrue(await hub.DeviceCameOnline(TestData.Device1));
             agentHubClients.Verify(x => x.Caller, Times.Never);
             agentHubCaller.Verify(x => x.SendCoreAsync("UninstallAgent", It.IsAny<object[]>(), It.IsAny<CancellationToken>()), Times.Never);
 
-            circuitConnection.Verify(x => x.InvokeCircuitEvent(
-                CircuitEventName.DeviceUpdate, 
-                It.Is<Device>(x => x.ID == _testData.Device1.ID)), 
+            browserClientsProxy.Verify(x => x.SendCoreAsync("DeviceCameOnline", 
+                It.Is<object[]>(x => x[0] == TestData.Device1),
+                It.IsAny<CancellationToken>()), 
                 Times.Once);
         }
 
         [TestCleanup]
         public void TestCleanup()
         {
-            _testData.ClearData();
+            TestData.ClearData();
         }
 
         [TestInitialize]
-        public void TestInit()
+        public async Task TestInit()
         {
-            _testData = new TestData();
+            await TestData.PopulateTestData();
             DataService = IoCActivator.ServiceProvider.GetRequiredService<IDataService>();
         }
 

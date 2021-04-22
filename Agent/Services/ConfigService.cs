@@ -57,7 +57,7 @@ namespace Remotely.Agent.Services
                 };
             }
 
-            if (Environment.UserInteractive && Debugger.IsAttached)
+            if (EnvironmentHelper.IsDebug && Debugger.IsAttached)
             {
                 return new ConnectionInfo()
                 {

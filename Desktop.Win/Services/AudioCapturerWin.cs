@@ -1,7 +1,6 @@
 ﻿using NAudio.Wave;
 using Remotely.Desktop.Core.Interfaces;
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -11,19 +10,11 @@ namespace Remotely.Desktop.Win.Services
 {
     public class AudioCapturerWin : IAudioCapturer
     {
-        private readonly List<byte> _tempBuffer = new();
-
-        private WasapiLoopbackCapture _capturer;
-        private Stopwatch _sendTimer;
-        private WaveFormat _targetFormat;
-
-
-        public AudioCapturerWin()
-        {
-            _targetFormat = new WaveFormat(16000, 8, 1);
-        }
-
         public event EventHandler<byte[]> AudioSampleReady;
+        private WasapiLoopbackCapture Capturer { get; set; }
+        private Stopwatch SendTimer { get; set; }
+        private WaveFormat TargetFormat { get; set; }
+        private List<byte> TempBuffer { get; set; } = new List<byte>();
         public void ToggleAudio(bool toggleOn)
         {
             if (toggleOn)
@@ -36,57 +27,25 @@ namespace Remotely.Desktop.Win.Services
             }
         }
 
-        private void Capturer_DataAvailable(object sender, WaveInEventArgs args)
-        {
-            try
-            {
-                if (args.Buffer.All(x => x == 0))
-                {
-                    return;
-                }
-
-                if (args.BytesRecorded > 0)
-                {
-                    lock (_tempBuffer)
-                    {
-                        if (!_sendTimer.IsRunning)
-                        {
-                            _sendTimer.Restart();
-                        }
-
-                        _tempBuffer.AddRange(args.Buffer.Take(args.BytesRecorded));
-
-                        if (_tempBuffer.Count > 50_000 ||
-                            _sendTimer.Elapsed.TotalMilliseconds > 1000)
-                        {
-                            _sendTimer.Reset();
-                            SendTempBuffer();
-                        }
-                    }
-                }
-            }
-            catch { }
-        }
-
         private void SendTempBuffer()
         {
-            if (_tempBuffer.Count == 0)
+            if (TempBuffer.Count == 0)
             {
                 return;
             }
 
             using var ms1 = new MemoryStream();
-            using (var wfw = new WaveFileWriter(ms1, _capturer.WaveFormat))
+            using (var wfw = new WaveFileWriter(ms1, Capturer.WaveFormat))
             {
-                wfw.Write(_tempBuffer.ToArray(), 0, _tempBuffer.Count);
+                wfw.Write(TempBuffer.ToArray(), 0, TempBuffer.Count);
             }
-            _tempBuffer.Clear();
+            TempBuffer.Clear();
 
             // Resample to 16-bit so Firefox will play it.
             using var ms2 = new MemoryStream(ms1.ToArray());
             using var wfr = new WaveFileReader(ms2);
             using var ms3 = new MemoryStream();
-            using (var resampler = new MediaFoundationResampler(wfr, _targetFormat))
+            using (var resampler = new MediaFoundationResampler(wfr, TargetFormat))
             {
                 WaveFileWriter.WriteWavFileToStream(ms3, resampler);
             }
@@ -97,23 +56,45 @@ namespace Remotely.Desktop.Win.Services
         {
             try
             {
-                _capturer = new WasapiLoopbackCapture();
-                _sendTimer = Stopwatch.StartNew();
-                _capturer.DataAvailable += Capturer_DataAvailable;
-                _capturer.StartRecording();
+                Capturer = new WasapiLoopbackCapture();
+                TargetFormat = new WaveFormat(16000, 8, 1);
+                SendTimer = Stopwatch.StartNew();
+                Capturer.DataAvailable += (aud, args) =>
+                {
+                    try
+                    {
+                        if (args.BytesRecorded > 0)
+                        {
+                            lock (TempBuffer)
+                            {
+                                if (!SendTimer.IsRunning)
+                                {
+                                    SendTimer.Restart();
+                                }
+                                TempBuffer.AddRange(args.Buffer.Take(args.BytesRecorded));
+                                if (TempBuffer.Count > 50000)
+                                {
+                                    SendTimer.Reset();
+                                    SendTempBuffer();
+                                }
+                                else if (SendTimer.Elapsed.TotalMilliseconds > 1000)
+                                {
+                                    SendTimer.Reset();
+                                    SendTempBuffer();
+                                }
+                            }
+                        }
+                    }
+                    catch { }
+                };
+                Capturer.StartRecording();
             }
             catch { }
         }
-
         private void Stop()
         {
-            if (_capturer is not null)
-            {
-                _capturer.DataAvailable -= Capturer_DataAvailable;
-            }
-            _capturer?.StopRecording();
-            _capturer.Dispose();
-            _sendTimer?.Stop();
+            Capturer?.StopRecording();
+            SendTimer?.Reset();
         }
     }
 }

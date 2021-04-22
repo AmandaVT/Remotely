@@ -34,7 +34,8 @@ else {
     $Root = (Get-Item -Path (Get-Location).Path).Parent.FullName + "\Server"
 }
 
-Push-Location "$Root"
+Set-Location "$Root"
+
 
 Replace-LineInFile -FilePath "$Root\appsettings.json" -MatchPattern '"DBProvider":' -ReplaceLineWith '    "DBProvider": "SQLite",' -MaxCount 1
 
@@ -49,5 +50,3 @@ Replace-LineInFile -FilePath "$Root\appsettings.json" -MatchPattern '"DBProvider
 dotnet ef migrations add $MigrationName --context "PostgreSqlDbContext"
 
 Replace-LineInFile -FilePath "$Root\appsettings.json" -MatchPattern '"DBProvider":' -ReplaceLineWith '    "DBProvider": "SQLite",' -MaxCount 1
-
-Pop-Location

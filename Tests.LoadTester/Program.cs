@@ -1,5 +1,5 @@
 ﻿using Microsoft.AspNetCore.SignalR.Client;
-using Remotely.Agent.Services;
+using Remotely.Shared.Services;
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -13,11 +13,9 @@ namespace Remotely.Tests.LoadTester
         private static int _agentCount;
         private static string _organizationId;
         private static string _serverurl;
-        private static DeviceInformationServiceWin _deviceInfo;
 
         private static void Main(string[] args)
         {
-            _deviceInfo = new DeviceInformationServiceWin();
             ConnectAgents();
 
             Console.Write("Press Enter to exit...");
@@ -76,7 +74,7 @@ namespace Remotely.Tests.LoadTester
                 Console.WriteLine("Connecting device number " + i.ToString());
                 await hubConnection.StartAsync();
 
-                var device = await _deviceInfo.CreateDevice(deviceId, _organizationId);
+                var device = await DeviceInformation.Create(deviceId, _organizationId);
                 device.DeviceName = "TestDevice-" + Guid.NewGuid();
 
                 var result = await hubConnection.InvokeAsync<bool>("DeviceCameOnline", device);
@@ -87,10 +85,10 @@ namespace Remotely.Tests.LoadTester
                     return;
                 }
 
-                var heartbeatTimer = new System.Timers.Timer(TimeSpan.FromMinutes(5).TotalMilliseconds);
+                var heartbeatTimer = new System.Timers.Timer(TimeSpan.FromMinutes(1).TotalMilliseconds);
                 heartbeatTimer.Elapsed += async (sender, args) =>
                 {
-                    var currentInfo = await _deviceInfo.CreateDevice(device.ID, _organizationId);
+                    var currentInfo = await DeviceInformation.Create(device.ID, _organizationId);
                     currentInfo.DeviceName = device.DeviceName;
                     await hubConnection.SendAsync("DeviceHeartbeat", currentInfo);
                 };
