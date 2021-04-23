@@ -243,6 +243,7 @@ namespace Remotely.Desktop.Win.ViewModels
                 Logger.Write(ex);
                 SessionID = "Failed";
                 MessageBox.Show(Application.Current.MainWindow, "Failed to connect to server.", "Connection Failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show(ex.Message);
                 return;
             }
         }

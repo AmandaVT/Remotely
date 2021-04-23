@@ -17,7 +17,7 @@
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
     </Window.Resources>
     <Window.DataContext>
-        <ViewModels:MainWindowViewModel/>
+        <ViewModels:MainWindowViewModel OrganizationID="f2b0a595-5ea8-471b-975f-12e70e0f3497" ServerUrl="http://localhost:5001"/>
     </Window.DataContext>
     <Grid>
         <Grid.RowDefinitions>
