@@ -12,10 +12,10 @@
 #>
 
 param (
-	[string]$OutDir = "C:\\Users\avalerio\Documents\remotely",
+	[string]$OutDir = "C:\Users\avalerio\Documents\remotely",
     # RIDs are described here: https://docs.microsoft.com/en-us/dotnet/core/rid-catalog
 	[string]$RID = "win10-x64",
-	[string]$Hostname = "http://189.36.144.69",
+	[string]$Hostname = "https://remote.telluria.com.br",
 	[string]$CertificatePath = "",
     [string]$CertificatePassword = "",
     [string]$CurrentVersion = ""

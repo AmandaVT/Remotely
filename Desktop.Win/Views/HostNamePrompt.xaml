@@ -10,7 +10,7 @@
         Title="Host Name" Height="150" Width="350" WindowStartupLocation="CenterOwner" 
         Icon="{Binding Icon}">
     <Window.DataContext>
-        <ViewModels:HostNamePromptViewModel/>
+        <ViewModels:HostNamePromptViewModel Host="https://"/>
     </Window.DataContext>
     <StackPanel Margin="10">
         <TextBlock Margin="0,0,0,5" Style="{StaticResource SectionHeader}"><Run Text="Enter the server URL:"/></TextBlock>
