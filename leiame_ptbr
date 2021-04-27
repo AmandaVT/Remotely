@@ -1,0 +1,5 @@
+Neste arquivo estão contidas as modificações para que o usuário não precise configurar a instalação. O arquivo modificado é o Publish.ps1, nele são adicionadas a configuração 
+do sistema operacional, o endereço do host e o endereço para a compilação do arquivo. O ID da organização utilizado na página de instalação foi configurado no código fonte da
+aplicação, mais precisamente na página de design. Existe na aplicação um outro endereço de host e um GUID para ID, que são utilizados na aplicação padrão para debug. 
+O funcionamento da aplicação com suas modificações ainda não foi testado para sistemas Windows 32bits nem para sistemas Linux. 
+Até o momento, os arquivos da compilação estão disponíveis na pasta do drive compartilhada por email.
